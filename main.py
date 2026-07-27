@@ -1,41 +1,50 @@
 # ============================================
-# VERIBUILD BACKEND API (Python + FastAPI)
+# VERIBUILD BACKEND API (Using Supabase REST API)
 # Deploy to Render.com
 # ============================================
 
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from supabase_py import create_client, Client
+import requests
 import os
 from datetime import datetime, timedelta
 import jwt
 from typing import Optional
 import uuid
+import json
 
 # ============================================
 # CONFIGURATION
 # ============================================
 app = FastAPI(title="VeriBuild API", version="1.0")
 
-# CORS (Allow frontend to call this API)
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your Vercel URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Supabase Connection
-SUPABASE_URL = os.getenv("SUPABASE_URL", "YOUR_SUPABASE_URL_HERE")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SUPABASE_ANON_KEY_HERE")
+# Supabase Configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("WARNING: SUPABASE_URL or SUPABASE_KEY not set!")
+
+# Supabase REST API Headers
+SUPABASE_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
 # ============================================
-# DATA MODELS (Pydantic)
+# DATA MODELS
 # ============================================
 
 class UserRegister(BaseModel):
@@ -93,11 +102,11 @@ def verify_jwt_token(token: str):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 def get_current_user(token: str = Depends(verify_jwt_token)):
-    # Fetch user from Supabase
-    response = supabase.table("users").select("*").eq("id", token["user_id"]).execute()
-    if not response.data:
+    url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{token['user_id']}&select=*"
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    if response.status_code != 200 or not response.json():
         raise HTTPException(status_code=404, detail="User not found")
-    return response.data[0]
+    return response.json()[0]
 
 # ============================================
 # API ENDPOINTS
@@ -111,16 +120,16 @@ def root():
 @app.post("/api/auth/register")
 def register(user: UserRegister):
     # Check if user exists
-    existing = supabase.table("users").select("*").eq("email", user.email).execute()
-    if existing.data:
+    url = f"{SUPABASE_URL}/rest/v1/users?email=eq.{user.email}&select=*"
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    if response.json():
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # In production, hash password with bcrypt
-    # For MVP, we store plaintext (UPGRADE BEFORE LAUNCH)
+    # Create user
     new_user = {
         "id": str(uuid.uuid4()),
         "email": user.email,
-        "password_hash": user.password,  # TODO: Hash this!
+        "password_hash": user.password,
         "full_name": user.full_name,
         "role": user.role,
         "phone": user.phone,
@@ -128,22 +137,22 @@ def register(user: UserRegister):
         "created_at": datetime.utcnow().isoformat()
     }
     
-    response = supabase.table("users").insert(new_user).execute()
-    if not response.data:
+    url = f"{SUPABASE_URL}/rest/v1/users"
+    response = requests.post(url, headers=SUPABASE_HEADERS, json=new_user)
+    if response.status_code != 201:
         raise HTTPException(status_code=400, detail="Registration failed")
     
     token = create_jwt_token(new_user["id"], user.email, user.role)
-    return {"token": token, "user": response.data[0]}
+    return {"token": token, "user": new_user}
 
 @app.post("/api/auth/login")
 def login(user: UserLogin):
-    # Find user
-    response = supabase.table("users").select("*").eq("email", user.email).execute()
-    if not response.data:
+    url = f"{SUPABASE_URL}/rest/v1/users?email=eq.{user.email}&select=*"
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    if not response.json():
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    db_user = response.data[0]
-    # TODO: Verify hashed password
+    db_user = response.json()[0]
     if db_user["password_hash"] != user.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
@@ -170,45 +179,50 @@ def create_submission(submission: SubmissionCreate, current_user=Depends(get_cur
         "submitted_at": datetime.utcnow().isoformat()
     }
     
-    response = supabase.table("submissions").insert(new_submission).execute()
-    return {"submission": response.data[0]}
+    url = f"{SUPABASE_URL}/rest/v1/submissions"
+    response = requests.post(url, headers=SUPABASE_HEADERS, json=new_submission)
+    if response.status_code != 201:
+        raise HTTPException(status_code=400, detail="Submission failed")
+    
+    return {"submission": new_submission}
 
 @app.get("/api/submissions")
 def get_submissions(current_user=Depends(get_current_user)):
     if current_user["role"] == "architect":
-        # Architects see their own submissions
-        response = supabase.table("submissions").select("*").eq("architect_id", current_user["id"]).execute()
-    elif current_user["role"] == "council_officer":
-        # Council sees all submissions
-        response = supabase.table("submissions").select("*").execute()
+        url = f"{SUPABASE_URL}/rest/v1/submissions?architect_id=eq.{current_user['id']}&select=*"
     else:
-        response = supabase.table("submissions").select("*").execute()
+        url = f"{SUPABASE_URL}/rest/v1/submissions?select=*"
     
-    return {"submissions": response.data}
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    return {"submissions": response.json()}
 
 @app.get("/api/submissions/{submission_id}")
-def get_submission(submission_id: str, current_user=Depends(get_current_user)):
-    response = supabase.table("submissions").select("*").eq("id", submission_id).execute()
-    if not response.data:
+def get_submission(submission_id: str):
+    url = f"{SUPABASE_URL}/rest/v1/submissions?id=eq.{submission_id}&select=*"
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    if not response.json():
         raise HTTPException(status_code=404, detail="Submission not found")
-    return {"submission": response.data[0]}
+    return {"submission": response.json()[0]}
 
 @app.put("/api/submissions/{submission_id}")
 def update_submission(submission_id: str, update: SubmissionUpdate, current_user=Depends(get_current_user)):
     # Check ownership
-    sub = supabase.table("submissions").select("*").eq("id", submission_id).execute()
-    if not sub.data:
+    url = f"{SUPABASE_URL}/rest/v1/submissions?id=eq.{submission_id}&select=*"
+    check = requests.get(url, headers=SUPABASE_HEADERS)
+    if not check.json():
         raise HTTPException(status_code=404, detail="Submission not found")
     
-    if current_user["role"] not in ["admin", "council_officer"] and sub.data[0]["architect_id"] != current_user["id"]:
+    sub = check.json()[0]
+    if current_user["role"] not in ["admin", "council_officer"] and sub["architect_id"] != current_user["id"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     update_data = {k: v for k, v in update.dict().items() if v is not None}
     if update.status == "approved":
         update_data["approved_at"] = datetime.utcnow().isoformat()
     
-    response = supabase.table("submissions").update(update_data).eq("id", submission_id).execute()
-    return {"submission": response.data[0]}
+    url = f"{SUPABASE_URL}/rest/v1/submissions?id=eq.{submission_id}"
+    response = requests.patch(url, headers=SUPABASE_HEADERS, json=update_data)
+    return {"submission": update_data}
 
 # ---------- COMMENTS ----------
 @app.post("/api/comments")
@@ -223,19 +237,46 @@ def create_comment(comment: CommentCreate, current_user=Depends(get_current_user
         "created_at": datetime.utcnow().isoformat()
     }
     
-    response = supabase.table("review_comments").insert(new_comment).execute()
-    return {"comment": response.data[0]}
+    url = f"{SUPABASE_URL}/rest/v1/review_comments"
+    response = requests.post(url, headers=SUPABASE_HEADERS, json=new_comment)
+    if response.status_code != 201:
+        raise HTTPException(status_code=400, detail="Failed to add comment")
+    return {"comment": new_comment}
 
 @app.get("/api/comments/{review_id}")
 def get_comments(review_id: str):
-    response = supabase.table("review_comments").select("*").eq("review_id", review_id).execute()
-    return {"comments": response.data}
+    url = f"{SUPABASE_URL}/rest/v1/review_comments?review_id=eq.{review_id}&select=*"
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    return {"comments": response.json()}
 
-# ---------- LEADERBOARD (Public) ----------
+# ---------- LEADERBOARD ----------
 @app.get("/api/leaderboard")
 def get_leaderboard():
-    response = supabase.table("leaderboard_cache").select("*").order("approved_count", desc=True).limit(50).execute()
-    return {"leaderboard": response.data}
+    # Get all approved submissions grouped by architect
+    url = f"{SUPABASE_URL}/rest/v1/submissions?status=eq.approved&select=architect_id"
+    response = requests.get(url, headers=SUPABASE_HEADERS)
+    submissions = response.json()
+    
+    # Count approvals per architect
+    counts = {}
+    for sub in submissions:
+        architect_id = sub["architect_id"]
+        counts[architect_id] = counts.get(architect_id, 0) + 1
+    
+    # Get architect names
+    leaderboard = []
+    for architect_id, count in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:50]:
+        url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{architect_id}&select=full_name,company_name"
+        user_resp = requests.get(url, headers=SUPABASE_HEADERS)
+        if user_resp.json():
+            user = user_resp.json()[0]
+            leaderboard.append({
+                "architect_name": user["full_name"],
+                "company": user.get("company_name", ""),
+                "approved_count": count
+            })
+    
+    return {"leaderboard": leaderboard}
 
 # ---------- HEALTH CHECK ----------
 @app.get("/api/health")
