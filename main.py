@@ -54,6 +54,8 @@ class UserRegister(BaseModel):
     role: str = "architect"
     phone: Optional[str] = None
     company_name: Optional[str] = None
+    city: Optional[str] = None  # NEW
+    registration_number: Optional[str] = None  # NEW
 
 class UserLogin(BaseModel):
     email: str
