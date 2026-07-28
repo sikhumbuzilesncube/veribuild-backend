@@ -44,7 +44,7 @@ SUPABASE_HEADERS = {
 }
 
 # ============================================
-# DATA MODELS
+# DATA MODELS (UPDATED)
 # ============================================
 
 class UserRegister(BaseModel):
@@ -129,16 +129,16 @@ def register(user: UserRegister):
     
     # Create user
     new_user = {
-    "id": str(uuid.uuid4()),
-    "email": user.email,
-    "password_hash": user.password,
-    "full_name": user.full_name,
-    "role": user.role,
-    "phone": user.phone,
-    "company_name": user.company_name,
-    "city": user.city,  # NEW
-    "registration_number": user.registration_number,  # NEW
-    "created_at": datetime.utcnow().isoformat()
+        "id": str(uuid.uuid4()),
+        "email": user.email,
+        "password_hash": user.password,
+        "full_name": user.full_name,
+        "role": user.role,
+        "phone": user.phone,
+        "company_name": user.company_name,
+        "city": user.city,  # NEW
+        "registration_number": user.registration_number,  # NEW
+        "created_at": datetime.utcnow().isoformat()
     }
     
     url = f"{SUPABASE_URL}/rest/v1/users"
@@ -253,7 +253,7 @@ def get_comments(review_id: str):
     response = requests.get(url, headers=SUPABASE_HEADERS)
     return {"comments": response.json()}
 
-# ---------- LEADERBOARD ----------
+# ---------- LEADERBOARD (UPDATED) ----------
 @app.get("/api/leaderboard")
 def get_leaderboard():
     # Get all approved submissions grouped by architect
@@ -267,16 +267,17 @@ def get_leaderboard():
         architect_id = sub["architect_id"]
         counts[architect_id] = counts.get(architect_id, 0) + 1
     
-    # Get architect names
+    # Get architect names and cities
     leaderboard = []
     for architect_id, count in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:50]:
-        url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{architect_id}&select=full_name,company_name"
+        url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{architect_id}&select=full_name,company_name,city"
         user_resp = requests.get(url, headers=SUPABASE_HEADERS)
         if user_resp.json():
             user = user_resp.json()[0]
             leaderboard.append({
                 "architect_name": user["full_name"],
                 "company": user.get("company_name", ""),
+                "city": user.get("city", "N/A"),  # NEW: Includes city
                 "approved_count": count
             })
     
