@@ -277,7 +277,7 @@ def get_leaderboard():
             leaderboard.append({
                 "architect_name": user["full_name"],
                 "company": user.get("company_name", ""),
-                "city": user.get("city", "N/A"),  # NEW: Includes city
+                "city": user.get("city", "N/A"),
                 "approved_count": count
             })
     
