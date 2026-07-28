@@ -129,14 +129,16 @@ def register(user: UserRegister):
     
     # Create user
     new_user = {
-        "id": str(uuid.uuid4()),
-        "email": user.email,
-        "password_hash": user.password,
-        "full_name": user.full_name,
-        "role": user.role,
-        "phone": user.phone,
-        "company_name": user.company_name,
-        "created_at": datetime.utcnow().isoformat()
+    "id": str(uuid.uuid4()),
+    "email": user.email,
+    "password_hash": user.password,
+    "full_name": user.full_name,
+    "role": user.role,
+    "phone": user.phone,
+    "company_name": user.company_name,
+    "city": user.city,  # NEW
+    "registration_number": user.registration_number,  # NEW
+    "created_at": datetime.utcnow().isoformat()
     }
     
     url = f"{SUPABASE_URL}/rest/v1/users"
